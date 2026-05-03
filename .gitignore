@@ -1,0 +1,12 @@
+# bridge runtime
+.bridge.pid
+bridge.pid
+bridge.log
+logs/
+
+# local backups / accidental dumps
+.env.bak*
+docker-compose.yml.bak*
+*.bak
+taobao_*.json
+.env

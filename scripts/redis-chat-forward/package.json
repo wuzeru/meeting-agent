@@ -1,0 +1,8 @@
+{
+  "name": "redis-chat-forward",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "redis": "^4.7.0"
+  }
+}

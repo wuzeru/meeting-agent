@@ -1,0 +1,27 @@
+// 粘贴到上游 Vexa: services/vexa-bot/core/src/services/chat.ts
+// 位置：MeetingChatService.private onNewMessage() 末尾，在 messageCallback 调用之前。
+// 需增加构造函数参数 nativeMeetingId: string，并在创建 MeetingChatService 处传入 Meet 会议码。
+//
+// 环境变量（在 bot 容器 / supervisor）：
+//   BRIDGE_CHAT_FORWARD_URL=http://host.docker.internal:8765/api/chat-in
+//   BRIDGE_CHAT_WEBHOOK_SECRET=<与 bridge .env BRIDGE_CHAT_WEBHOOK_SECRET 相同>
+
+/*
+const bridgeUrl = process.env.BRIDGE_CHAT_FORWARD_URL?.trim();
+const bridgeSecret = process.env.BRIDGE_CHAT_WEBHOOK_SECRET?.trim();
+if (bridgeUrl && !msg.isFromBot && this.nativeMeetingIdStr) {
+  const body = JSON.stringify({
+    text: msg.text,
+    native_meeting_id: this.nativeMeetingIdStr,
+    message_id: `bot-${this.meetingId}-${msg.timestamp}-${msg.text.slice(0, 48)}`,
+  });
+  fetch(bridgeUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(bridgeSecret ? { Authorization: `Bearer ${bridgeSecret}` } : {}),
+    },
+    body,
+  }).catch(() => {});
+}
+*/

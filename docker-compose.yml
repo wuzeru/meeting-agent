@@ -1,0 +1,102 @@
+# Vexa Lite — single-host deployment via OrbStack on macmini2
+# Notes:
+#   * vexa-lite 镜像目前只有 linux/amd64，靠 Rosetta 模拟运行。
+#   * 不暴露 Postgres 端口（宿主 5432 已被 OrbStack 自身占用，且没必要外露）。
+#   * 故意不设 OPENAI_API_KEY，让 TTS 走内置 Piper（本地）。
+#   * 方案 B：chat-forward 与 vexa 共享网络命名空间，订阅 Redis va:meeting:*:chat → POST 宿主机 bridge /api/chat-in
+services:
+  postgres:
+    image: postgres:16
+    platform: linux/amd64
+    container_name: vexa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  vexa:
+    image: vexaai/vexa-lite:latest
+    platform: linux/amd64
+    container_name: vexa
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      asr-shim:
+        condition: service_started
+    ports:
+      - "8056:8056"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      TRANSCRIPTION_SERVICE_URL: ${TRANSCRIPTION_SERVICE_URL:-http://asr-shim:8787/v1/audio/transcriptions}
+      TRANSCRIPTION_SERVICE_TOKEN: ${TRANSCRIPTION_SERVICE_TOKEN:-}
+      SKIP_TRANSCRIPTION_CHECK: "${SKIP_TRANSCRIPTION_CHECK:-false}"
+      MAX_SPEECH_DURATION_SEC: "${MAX_SPEECH_DURATION_SEC:-8}"
+      MIN_SILENCE_DURATION_MS: "${MIN_SILENCE_DURATION_MS:-800}"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+  chat-forward:
+    image: node:22-alpine
+    platform: linux/amd64
+    container_name: vexa-chat-forward
+    restart: unless-stopped
+    depends_on:
+      - vexa
+    network_mode: "service:vexa"
+    working_dir: /app
+    volumes:
+      - ./scripts/redis-chat-forward:/app
+    environment:
+      REDIS_URL: "${CHAT_FORWARD_REDIS_URL:-redis://127.0.0.1:6379}"
+      VEXA_API_BASE: "${CHAT_FORWARD_VEXA_API_BASE:-http://127.0.0.1:8056}"
+      VEXA_API_KEY: "${VEXA_API_KEY}"
+      BRIDGE_CHAT_FORWARD_URL: "${BRIDGE_CHAT_FORWARD_URL:-http://host.docker.internal:8765/api/chat-in}"
+      BRIDGE_CHAT_WEBHOOK_SECRET: "${BRIDGE_CHAT_WEBHOOK_SECRET:-}"
+      # 排障：docker logs vexa-chat-forward 会打印每条 Redis 聊天与跳过原因
+      CHAT_FORWARD_DEBUG: "${CHAT_FORWARD_DEBUG:-false}"
+    command:
+      - sh
+      - -c
+      - npm install --no-fund --no-audit && exec node index.mjs
+
+  asr-shim:
+    build:
+      context: ./asr-shim
+      dockerfile: Dockerfile
+    container_name: vexa-asr-shim
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      VOLC_APP_KEY: ${VOLC_SPEECH_APP_ID}
+      VOLC_ACCESS_KEY: ${VOLC_SPEECH_ACCESS_KEY}
+      VOLC_RESOURCE_ID: ${VOLC_ASR_RESOURCE_ID:-volc.bigasr.sauc.duration}
+      VOLC_WS_URL: ${VOLC_ASR_WS_URL:-wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream}
+      VOLC_MODEL_NAME: ${VOLC_ASR_MODEL_NAME:-bigmodel}
+      SHOW_UTTERANCES: "true"
+      ENABLE_ITN: "true"
+      ENABLE_PUNC: "true"
+      RESULT_TYPE: full
+      PROXY_API_KEY: ${ASR_SHIM_TOKEN:-}
+      FORWARD_TRANSCRIPT_URL: ${FORWARD_TRANSCRIPT_URL:-http://host.docker.internal:8765/tx}
+      FORWARD_DEBOUNCE_MS: "${FORWARD_DEBOUNCE_MS:-2000}"
+      FORWARD_PROMPT_TO_DOUBAO: "${FORWARD_PROMPT_TO_DOUBAO:-false}"
+      PROMPT_MAX_LEN: "${PROMPT_MAX_LEN:-200}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8787:8787"
+
+volumes:
+  postgres-data:
